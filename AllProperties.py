@@ -307,6 +307,146 @@ def dft_duality(x):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 10. MULTIPLICATION IN TIME  (Frequency-Domain Convolution / Windowing)
+#     x[n] · y[n]  ⟺  (1/N) · (X[k] ⊛ Y[k])
+# ─────────────────────────────────────────────────────────────────────────────
+def dft_multiplication_in_time(x, y):
+    """
+    Property: DFT{ x[n] · y[n] } = (1/N) · (X[k] ⊛ Y[k])
+
+    Pointwise multiplication in the time domain equals circular convolution
+    of the two spectra, scaled by 1/N.
+
+    This is the mathematical basis of WINDOWING: multiplying a signal by a
+    window function (Hamming, Hanning, etc.) convolves its spectrum with the
+    window's spectrum — this is how spectral leakage is controlled.
+
+    Returns True if LHS == RHS within floating-point tolerance.
+    """
+    N = len(x)
+    assert len(y) == N, "x and y must have the same length"
+
+    # LHS: DFT of the product
+    lhs = fft((x * y).astype(complex))[:N]
+
+    # RHS: (1/N) * circular convolution of X and Y in frequency domain
+    X = fft(x.astype(complex))[:N]
+    Y = fft(y.astype(complex))[:N]
+
+    # Circular convolve X and Y (both length N, already aligned)
+    XY_conv = np.real(ifft(fft(X) * fft(Y)))[:N]
+    rhs = XY_conv / N
+
+    holds = np.allclose(np.real(lhs), rhs, atol=1e-6)
+    print(f"[Multiplication in Time]  holds = {holds}")
+    return holds
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 11. DC COMPONENT  (Summation Property)
+#     X[0] = Σ x[n]  for n = 0 … N-1
+# ─────────────────────────────────────────────────────────────────────────────
+def dft_dc_component(x):
+    """
+    Property: X[0] = Σ_{n=0}^{N-1} x[n]
+
+    The very first FFT bin (index 0) equals the sum of all time-domain samples.
+    It represents the DC offset (zero-frequency average) of the signal.
+
+    A pure sine wave centred on zero has X[0] = 0.
+
+    Returns (X0, sum_x, holds).
+    """
+    X     = fft(x.astype(complex))
+    X0    = X[0]
+    sum_x = np.sum(x)
+
+    holds = np.isclose(np.real(X0), sum_x, atol=1e-6)
+    print(f"[DC Component]  X[0]={np.real(X0):.4f}  "
+          f"sum(x)={sum_x:.4f}  holds={holds}")
+    return np.real(X0), sum_x, holds
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 12. NYQUIST BIN  (Alternating Sum Property)
+#     X[N/2] = Σ (-1)^n · x[n]  for n = 0 … N-1   (N even)
+# ─────────────────────────────────────────────────────────────────────────────
+def dft_nyquist_bin(x):
+    """
+    Property: X[N/2] = Σ_{n=0}^{N-1} (-1)^n · x[n]    (N must be even)
+
+    The middle FFT bin (index N/2) equals the alternating sum of the
+    time-domain signal. It represents the Nyquist frequency — the highest
+    measurable frequency — where the signal alternates sign every sample.
+
+    Returns (X_nyquist, alternating_sum, holds).
+    """
+    N = len(x)
+    assert N % 2 == 0, "N must be even for the Nyquist bin property"
+
+    X = fft(x.astype(complex))
+
+    X_nyquist      = np.real(X[N // 2])
+    alternating_sum = np.sum(np.array([(-1)**n * x[n] for n in range(N)]))
+
+    holds = np.isclose(X_nyquist, alternating_sum, atol=1e-6)
+    print(f"[Nyquist Bin]  X[N/2]={X_nyquist:.4f}  "
+          f"alt_sum={alternating_sum:.4f}  holds={holds}")
+    return X_nyquist, alternating_sum, holds
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 13. REAL/EVEN AND REAL/ODD SYMMETRY
+#
+#   Real & Even signal: x[n] = x[-n]
+#       → FFT is entirely Real and Even  (imaginary part = 0)
+#       → Foundation of the DCT (used in JPEG compression)
+#
+#   Real & Odd signal:  x[n] = -x[-n]
+#       → FFT is entirely Imaginary and Odd (real part = 0)
+# ─────────────────────────────────────────────────────────────────────────────
+def dft_real_even_odd_symmetry(N=16):
+    """
+    Property A — Real & Even input:
+        x[n] = x[(-n) mod N]  →  X[k] is real and even  (Im(X[k]) ≈ 0)
+
+    Property B — Real & Odd input:
+        x[n] = -x[(-n) mod N]  →  X[k] is imaginary and odd  (Re(X[k]) ≈ 0)
+
+    This is the mathematical basis of the DCT:
+    mirroring a signal to make it even removes all imaginary DFT components,
+    halving the computation — exactly what JPEG image compression exploits.
+
+    Returns (even_holds, odd_holds).
+    """
+    n = np.arange(N)
+
+    # ── Real & Even signal (cosine is naturally even) ─────────────────
+    x_even = np.cos(2 * math.pi * 2 * n / N)   # x[n] = x[-n]
+    X_even = fft(x_even)[:N]
+
+    even_is_real = np.allclose(np.imag(X_even), 0, atol=1e-9)
+    even_is_even = np.allclose(np.real(X_even),
+                               np.concatenate(([np.real(X_even[0])],
+                                               np.real(X_even[1:])[::-1])),
+                               atol=1e-9)
+    even_holds = even_is_real and even_is_even
+
+    # ── Real & Odd signal (sine is naturally odd) ─────────────────────
+    x_odd = np.sin(2 * math.pi * 2 * n / N)    # x[n] = -x[-n]
+    X_odd = fft(x_odd)[:N]
+
+    odd_is_imag = np.allclose(np.real(X_odd), 0, atol=1e-9)
+    odd_holds   = odd_is_imag
+
+    print(f"[Real/Even Symmetry]  FFT is real & even  → holds = {even_holds}")
+    print(f"[Real/Odd  Symmetry]  FFT is imaginary & odd → holds = {odd_holds}")
+    print(f"  (DCT connection: even-mirrored signal has zero imaginary FFT "
+          f"→ real-only transform)")
+    return even_holds, odd_holds
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # DEMO  —  run all properties on a simple test signal
 # ─────────────────────────────────────────────────────────────────────────────
 def demo():
@@ -329,7 +469,13 @@ def demo():
     parsevals_theorem(x)
     conjugate_symmetry(x)
     dft_duality(x)
+    # ── 4 new properties ──────────────────────────────────────────────
+    dft_multiplication_in_time(x, y)
+    dft_dc_component(x)
+    dft_nyquist_bin(x)
+    dft_real_even_odd_symmetry(N)
     print("=" * 60)
+
 
 
 
